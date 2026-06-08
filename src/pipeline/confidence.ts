@@ -170,24 +170,25 @@ export function freshness(fetchedAt: string, volatilityClass: string): number {
   return Math.exp(-Math.LN2 * ageDays / halfLife)
 }
 
-/**
- * Full confidence score for an entry.
- * Called on every read — never stored.
- */
+export function corroborationMultiplier(count: number): number {
+  return Math.min(1.30, 1.0 + count * 0.05)
+}
+
 export function computeConfidence(entry: {
-  source_url:          string
-  fetched_at:          string
-  extraction_quality?: number | null
-  volatility_class?:   string | null
-  flag_count?:         number        // ← add this
+  source_url:           string
+  fetched_at:           string
+  extraction_quality?:  number | null
+  volatility_class?:    string | null
+  flag_count?:          number
+  corroboration_count?: number  
 }): number {
-  const authority  = sourceAuthority(entry.source_url)
-  const quality    = entry.extraction_quality ?? 0.75
-  const decay      = freshness(entry.fetched_at, entry.volatility_class ?? 'medium')
+  const authority       = sourceAuthority(entry.source_url)
+  const quality         = entry.extraction_quality ?? 0.75
+  const decay           = freshness(entry.fetched_at, entry.volatility_class ?? 'medium')
+  const corroboration   = corroborationMultiplier(entry.corroboration_count ?? 0)
 
-  let score = authority * quality * decay
+  let score = authority * quality * decay * corroboration
 
-  // Apply flag penalty if flags exist
   if (entry.flag_count && entry.flag_count > 0) {
     score = applyFlagPenalty(score, entry.flag_count)
   }

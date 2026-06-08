@@ -43,6 +43,7 @@ queryRouter.get('/', async (c) => {
           extraction_quality: (entry as any).extraction_quality ?? null,
           volatility_class:   (entry as any).volatility_class   ?? null,
           flag_count:         flagCount,
+          corroboration_count: (entry as any).corroboration_count ?? 0,
         })
 
         if (!isStale(confidence)) {
@@ -54,6 +55,7 @@ queryRouter.get('/', async (c) => {
           return c.json({
             hit:              true,
             source:           'cache',
+            id:               entry.id,
             topic:            entry.topic,
             facts:            entry.facts,
             source_url:       entry.source_url,
@@ -80,6 +82,7 @@ queryRouter.get('/', async (c) => {
         extraction_quality: (best as any).extraction_quality ?? null,
         volatility_class:   (best as any).volatility_class   ?? null,
         flag_count:         flagCount,
+        corroboration_count: (best as any).corroboration_count ?? 0,
       })
 
       console.log(`Topic cache hit: "${best.topic}" (similarity: ${best.similarity?.toFixed(3)}, confidence: ${confidence}, flags: ${flagCount})`)
@@ -90,6 +93,7 @@ queryRouter.get('/', async (c) => {
         return c.json({
           hit:              true,
           source:           'cache',
+          id:               best.id,
           topic:            best.topic,
           facts:            best.facts,
           source_url:       best.source_url,
@@ -140,6 +144,7 @@ queryRouter.get('/', async (c) => {
       extraction_quality: extracted.extraction_quality,
       volatility_class:   extracted.volatility_class,
       flag_count:         0,
+      corroboration_count: (entry as any).corroboration_count ?? 0,
     })
 
     console.log(`  Written: ${entry.id} (confidence: ${confidence})`)
@@ -147,6 +152,7 @@ queryRouter.get('/', async (c) => {
     return c.json({
       hit:              false,
       source:           'web',
+      id:               entry.id,
       topic:            entry.topic,
       facts:            entry.facts,
       source_url:       entry.source_url,
