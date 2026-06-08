@@ -25,15 +25,62 @@ queryRouter.get('/', async (c) => {
     if (agent) recordQuery(agent.id).catch(() => {})  // fire and forget
   }
 
+  // Queries AWP cannot answer — personal, realtime, or ambiguous
+  const UNANSWERABLE_PATTERNS = [
+    /^who am i/i,
+    /^where am i/i,
+    /^what time is it/i,
+    /^what is the (current |today'?s? )?(time|date|weather)/i,
+    /^how (old|tall|much) am i/i,
+    /^what is my/i,
+    /^where do i/i,
+    /^am i/i,
+  ]
+
+  const isUnanswerable = UNANSWERABLE_PATTERNS.some(p => p.test(q.trim()))
+
+  if (isUnanswerable) {
+    return c.json({
+      error:   'This query cannot be answered by AWP',
+      reason:  'AWP indexes factual knowledge from the web. Personal, location-based, or real-time questions cannot be answered.',
+      query:   q,
+      tip:     'Try asking about a topic, person, concept, or event instead.',
+    }, 422)
+  }
+
+  // Block SQL injection attempts and obviously non-question inputs
+  const SQL_PATTERNS = [
+    /^SELECT\s/i,
+    /^INSERT\s/i,
+    /^UPDATE\s/i,
+    /^DELETE\s/i,
+    /^DROP\s/i,
+    /^CREATE\s/i,
+    /^ALTER\s/i,
+    /;\s*(DROP|DELETE|INSERT|UPDATE)/i,
+    /--\s/,           // SQL comment
+    /\/\*/,           // block comment
+  ]
+
+  const isSQLInjection = SQL_PATTERNS.some(p => p.test(q.trim()))
+
+  if (isSQLInjection) {
+    return c.json({
+      error: 'Invalid query',
+      reason: 'AWP accepts natural language questions only.',
+      tip: 'Try asking something like "what is machine learning" instead.',
+    }, 422)
+  }
+
   try {
 
     const queryEmbedding = await embed(q)
 
     // Catches rephrased questions about the same topic
-    const matchedEntryId = await searchQueries(queryEmbedding)
+    const queryMatch = await searchQueries(queryEmbedding)
 
-    if (matchedEntryId) {
-      const entry = await getEntry(matchedEntryId)
+    if (queryMatch && queryMatch.similarity >= 0.82) {
+      const entry = await getEntry(queryMatch.entryId)
 
       if (entry) {
         const flagCount  = await getFlagCount(entry.id)
@@ -74,38 +121,42 @@ queryRouter.get('/', async (c) => {
 
     if (results.length > 0) {
       const best      = results[0]
-      const flagCount = await getFlagCount(best.id)
+      if (!best.similarity || best.similarity < 0.78) {
+        console.log(`Topic match too weak (similarity: ${best.similarity?.toFixed(3)}) — treating as miss`)
+      } else {
+        const flagCount = await getFlagCount(best.id)
 
-      const confidence = computeConfidence({
-        source_url:         best.source_url,
-        fetched_at:         best.fetched_at,
-        extraction_quality: (best as any).extraction_quality ?? null,
-        volatility_class:   (best as any).volatility_class   ?? null,
-        flag_count:         flagCount,
-        corroboration_count: (best as any).corroboration_count ?? 0,
-      })
-
-      console.log(`Topic cache hit: "${best.topic}" (similarity: ${best.similarity?.toFixed(3)}, confidence: ${confidence}, flags: ${flagCount})`)
-
-      if (!isStale(confidence)) {
-        await writeQuery(best.id, q, queryEmbedding)
-
-        return c.json({
-          hit:              true,
-          source:           'cache',
-          id:               best.id,
-          topic:            best.topic,
-          facts:            best.facts,
-          source_url:       best.source_url,
-          fetched_at:       best.fetched_at,
-          similarity:       best.similarity,
-          confidence,
-          confidence_label: confidenceLabel(confidence),
-          flag_count:       flagCount,
+        const confidence = computeConfidence({
+          source_url:         best.source_url,
+          fetched_at:         best.fetched_at,
+          extraction_quality: (best as any).extraction_quality ?? null,
+          volatility_class:   (best as any).volatility_class   ?? null,
+          flag_count:         flagCount,
+          corroboration_count: (best as any).corroboration_count ?? 0,
         })
-      }
 
-      console.log(`Entry stale (confidence: ${confidence}, flags: ${flagCount}) — re-fetching...`)
+        console.log(`Topic cache hit: "${best.topic}" (similarity: ${best.similarity?.toFixed(3)}, confidence: ${confidence}, flags: ${flagCount})`)
+
+        if (!isStale(confidence)) {
+          await writeQuery(best.id, q, queryEmbedding)
+
+          return c.json({
+            hit:              true,
+            source:           'cache',
+            id:               best.id,
+            topic:            best.topic,
+            facts:            best.facts,
+            source_url:       best.source_url,
+            fetched_at:       best.fetched_at,
+            similarity:       best.similarity,
+            confidence,
+            confidence_label: confidenceLabel(confidence),
+            flag_count:       flagCount,
+          })
+        }
+
+        console.log(`Entry stale (confidence: ${confidence}, flags: ${flagCount}) — re-fetching...`)
+      }
     }
 
     console.log(`Web fetch for: "${q}"`)

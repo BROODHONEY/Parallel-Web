@@ -7,7 +7,7 @@ import type { Entry, NewEntry } from './types'
  */
 export async function searchEntries(
   embedding: number[],
-  threshold = 0.60,
+  threshold = 0.78,
   limit = 3
 ): Promise<Entry[]> {
   const { data, error } = await db.rpc('search_entries', {
@@ -74,17 +74,15 @@ export async function writeQuery(
   queryText: string,
   embedding: number[]
 ): Promise<void> {
-  // Check if this exact query text already exists for this entry
-  // Prevents duplicate rows from repeated web fetches
-  const { data: existing } = await db
-    .from('queries')
+  // Verify the entry actually exists before storing the query
+  const { data: entryExists } = await db
+    .from('entries')
     .select('id')
-    .eq('entry_id', entryId)
-    .eq('query_text', queryText)
-    .limit(1)
+    .eq('id', entryId)
+    .single()
 
-  if (existing && existing.length > 0) {
-    console.log(`  Query already stored, skipping duplicate: "${queryText.slice(0, 60)}"`)
+  if (!entryExists) {
+    console.warn(`  Skipping writeQuery — entry ${entryId} does not exist`)
     return
   }
 
@@ -105,8 +103,8 @@ export async function writeQuery(
  */
 export async function searchQueries(
   embedding: number[],
-  threshold = 0.60
-): Promise<string | null> {
+  threshold = 0.82
+): Promise<{ entryId: string; similarity: number } | null> {
   const { data, error } = await db.rpc('search_queries', {
     query_embedding: embedding,
     match_threshold: threshold,
@@ -114,7 +112,10 @@ export async function searchQueries(
   })
 
   if (error || !data || data.length === 0) return null
-  return data[0].entry_id as string
+  return {
+    entryId:    data[0].entry_id as string,
+    similarity: data[0].similarity as number,
+  }
 }
 
 /**
@@ -124,16 +125,14 @@ export async function searchQueries(
 export async function findBestMatch(
   embedding: number[]
 ): Promise<{ entry: Entry; matchedVia: 'query' | 'topic' } | null> {
-  // Search 1: queries table — catches rephrased questions
-  const queryMatch = await searchQueries(embedding, 0.65)
-  if (queryMatch) {
-    const entry = await getEntry(queryMatch)
+  const queryMatch = await searchQueries(embedding, 0.82)  // was 0.65
+  if (queryMatch && queryMatch.similarity >= 0.82) {
+    const entry = await getEntry(queryMatch.entryId)
     if (entry) return { entry, matchedVia: 'query' }
   }
 
-  // Search 2: entries table — catches topic-level matches
-  const entryResults = await searchEntries(embedding, 0.55, 3)
-  if (entryResults.length > 0) {
+  const entryResults = await searchEntries(embedding, 0.78, 3)  // was 0.55
+  if (entryResults.length > 0 && (entryResults[0].similarity ?? 0) >= 0.78) {
     return { entry: entryResults[0], matchedVia: 'topic' }
   }
 

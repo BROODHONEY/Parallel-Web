@@ -85,3 +85,4 @@ entryRouter.post('/', requireAuth, requireWriteAccess, async (c) => {
     return c.json({ error: err.message }, 500)
   }
 })
+
